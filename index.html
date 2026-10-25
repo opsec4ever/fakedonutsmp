@@ -33,6 +33,23 @@ const view=$('view'), panel=$('panel'), status=$('status'), fileInput=$('file');
 let renderer,scene,camera,clock,worldGroup,player,avatar,loaded=false,playing=false,yaw=0,pitch=0,velY=0,onGround=false;
 const keys={}; const textureCache=new Map(); let blockCount=0, worldDims=[0,0,0], lastFile='';
 const texBase='https://mcasset.cloud/26.3/assets/minecraft/textures/block/';
+const textureFaces={
+ grass_block:['grass_block_side','grass_block_side','grass_block_top','dirt','grass_block_side','grass_block_side'],
+ podzol:['podzol_side','podzol_side','podzol_top','dirt','podzol_side','podzol_side'],
+ mycelium:['mycelium_side','mycelium_side','mycelium_top','dirt','mycelium_side','mycelium_side'],
+ oak_log:['oak_log','oak_log','oak_log_top','oak_log_top','oak_log','oak_log'],
+ spruce_log:['spruce_log','spruce_log','spruce_log_top','spruce_log_top','spruce_log','spruce_log'],
+ birch_log:['birch_log','birch_log','birch_log_top','birch_log_top','birch_log','birch_log'],
+ jungle_log:['jungle_log','jungle_log','jungle_log_top','jungle_log_top','jungle_log','jungle_log'],
+ acacia_log:['acacia_log','acacia_log','acacia_log_top','acacia_log_top','acacia_log','acacia_log'],
+ dark_oak_log:['dark_oak_log','dark_oak_log','dark_oak_log_top','dark_oak_log_top','dark_oak_log','dark_oak_log'],
+ mangrove_log:['mangrove_log','mangrove_log','mangrove_log_top','mangrove_log_top','mangrove_log','mangrove_log'],
+ cherry_log:['cherry_log','cherry_log','cherry_log_top','cherry_log_top','cherry_log','cherry_log'],
+ pale_oak_log:['pale_oak_log','pale_oak_log','pale_oak_log_top','pale_oak_log_top','pale_oak_log','pale_oak_log'],
+ stone:['stone','stone','stone','stone','stone','stone'],
+ dirt:['dirt','dirt','dirt','dirt','dirt','dirt'],
+ sand:['sand','sand','sand','sand','sand','sand'],
+
 function say(s){status.textContent=s}
 function toast(s){const t=$('toast');t.textContent=s;t.classList.remove('hidden');clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.classList.add('hidden'),2600)}
 function init(){
@@ -74,10 +91,18 @@ function movePlayer(dt){
 const solid=new Set();
 function collides(x,y,z){if(!worldGroup||!loaded)return false;const bx=Math.floor(x),by=Math.floor(y),bz=Math.floor(z);for(let xx=bx-1;xx<=bx+1;xx++)for(let yy=Math.floor(y);yy<=Math.floor(y+1.7);yy++)for(let zz=bz-1;zz<=bz+1;zz++){if(solid.has(xx+','+yy+','+zz)&&Math.abs(x-(xx+.5))<.32&&Math.abs(z-(zz+.5))<.32&&y<yy+1&&y+1.7>yy)return true}return false}
 function blockName(s){return String(s||'minecraft:stone').replace(/^minecraft:/,'').split('[')[0].replace(/[^a-z0-9_]/g,'')||'stone'}
-function texUrl(name){const aliases={'grass_block':'grass_block_top','dirt_path':'dirt_path_top','crafting_table':'crafting_table_front','furnace':'furnace_front','oak_log':'oak_log','birch_log':'birch_log','spruce_log':'spruce_log','water':'water_still','lava':'lava_still','air':'air'};return texBase+(aliases[name]||name)+'.png'}
+function texUrl(name){return texBase+name+'.png'}
+async function loadOneTexture(name){
+ return new Promise(resolve=>{
+  const loader=new THREE.TextureLoader();loader.setCrossOrigin('anonymous');
+  loader.load(texUrl(name),t=>{t.magFilter=THREE.NearestFilter;t.minFilter=THREE.NearestMipmapNearestFilter;t.colorSpace=THREE.SRGBColorSpace;resolve(new THREE.MeshLambertMaterial({map:t}))},undefined,()=>resolve(fallbackMat(name)));
+ });
+}
 async function getTexture(name){
  if(textureCache.has(name))return textureCache.get(name);
- const p=new Promise(resolve=>{const loader=new THREE.TextureLoader();loader.setCrossOrigin('anonymous');loader.load(texUrl(name),t=>{t.magFilter=THREE.NearestFilter;t.minFilter=THREE.NearestMipmapNearestFilter;t.colorSpace=THREE.SRGBColorSpace;resolve(new THREE.MeshLambertMaterial({map:t}))},undefined,()=>resolve(fallbackMat(name)))});textureCache.set(name,p);return p;
+ const faces=textureFaces[name]||[name,name,name,name,name,name];
+ const p=Promise.all(faces.map(loadOneTexture));
+ textureCache.set(name,p);return p;
 }
 function fallbackMat(name){let c=0x888888;if(/grass|moss|leaves|vine/.test(name))c=0x4e8c42;else if(/wood|log|plank/.test(name))c=0x9b7449;else if(/water/.test(name))c=0x426fd4;else if(/sand/.test(name))c=0xd7c88a;else if(/stone|deepslate|cobble|ore/.test(name))c=0x777777;else if(/glass/.test(name))c=0xb8dce5;return new THREE.MeshLambertMaterial({color:c})}
 function readVarints(bytes,amount){const out=[];let i=0;for(let n=0;n<amount&&i<bytes.length;n++){let value=0,shift=0,b;do{if(i>=bytes.length)throw Error('BlockData ended early');b=bytes[i++];value|=(b&127)<<shift;shift+=7;if(shift>35)throw Error('Invalid block palette varint')}while(b&128);out.push(value>>>0)}return out}
@@ -86,9 +111,13 @@ function val(obj,key){let v=obj?.[key];if(v&&typeof v==='object'&&'value'in v)re
 function getCompound(root,key){const v=val(root,key);return v?.value||v||{}}
 function asNum(v){if(v&&typeof v==='object'&&'value'in v)v=v.value;return Number(v)||0}
 async function parseSchematic(file){
- let bytes=new Uint8Array(await file.arrayBuffer());if(file.name.endsWith('.gz')||(bytes[0]===31&&bytes[1]===139))bytes=gunzipSync(bytes);
- let parsed=await nbt.parse(bytes);let root=parsed.parsed||parsed;let d=unwrap(root);if(d?.value)d=d.value;
- // prismarine-nbt wraps root data in a named compound
+ let bytes=new Uint8Array(await file.arrayBuffer());
+ // Prismarine-NBT expects an ArrayBuffer in browsers, not a Uint8Array view.
+ let input=bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength);
+ let parsed=await nbt.parse(input);
+ let root=parsed.parsed||parsed;
+ // Root is the compound tag; its value contains the named tags.
+ let d=root?.value||root;
  if(d?.type==='compound'&&d.value)d=d.value;
  const data=getCompound(d,'Schematic');const rootData=Object.keys(data).length?data:d;
  let width=asNum(val(rootData,'Width')),height=asNum(val(rootData,'Height')),length=asNum(val(rootData,'Length'));
@@ -114,7 +143,7 @@ async function buildWorld(data){
  const cx=data.width/2,cz=data.length/2;const groups=new Map();
  for(const b of data.blocks){const x=b.x-cx,y=b.y,z=b.z-cz;solid.add(x+','+y+','+z);if(!groups.has(b.name))groups.set(b.name,[]);groups.get(b.name).push({x,y,z})}
  const geo=new THREE.BoxGeometry(1,1,1);let done=0;
- for(const [name,positions] of groups){const mat=await getTexture(name);const mesh=new THREE.InstancedMesh(geo,mat,positions.length);mesh.castShadow=true;mesh.receiveShadow=true;const dummy=new THREE.Object3D();for(let i=0;i<positions.length;i++){const p=positions[i];dummy.position.set(p.x+.5,p.y+.5,p.z+.5);dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix)}mesh.instanceMatrix.needsUpdate=true;worldGroup.add(mesh);done+=positions.length}
+ for(const [name,positions] of groups){const mats=await getTexture(name);const mesh=new THREE.InstancedMesh(geo,mats,positions.length);mesh.castShadow=true;mesh.receiveShadow=true;const dummy=new THREE.Object3D();for(let i=0;i<positions.length;i++){const p=positions[i];dummy.position.set(p.x+.5,p.y+.5,p.z+.5);dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix)}mesh.instanceMatrix.needsUpdate=true;worldGroup.add(mesh);done+=positions.length}
  worldGroup.position.set(0,0,0);if(avatar){scene.remove(avatar);avatar=null}setPlayerAt(0,Math.max(2,data.height+2),Math.max(data.length/2,4)-cz); // position reset below
  player.x=0;player.z=Math.max(3,data.length/2+3);avatar.position.set(player.x,player.y-.1,player.z);camera.position.set(player.x,player.y+1.15,player.z);
  camera.far=Math.max(250,Math.max(data.width,data.height,data.length)*4);camera.updateProjectionMatrix();
