@@ -48,7 +48,8 @@ const textureFaces={
  pale_oak_log:['pale_oak_log','pale_oak_log','pale_oak_log_top','pale_oak_log_top','pale_oak_log','pale_oak_log'],
  stone:['stone','stone','stone','stone','stone','stone'],
  dirt:['dirt','dirt','dirt','dirt','dirt','dirt'],
- sand:['sand','sand','sand','sand','sand','sand'],
+ sand:['sand','sand','sand','sand','sand','sand']
+};
 
 function say(s){status.textContent=s}
 function toast(s){const t=$('toast');t.textContent=s;t.classList.remove('hidden');clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.classList.add('hidden'),2600)}
