@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>schem world</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+:root{color-scheme:dark;--bg:#101010;--panel:#171717;--line:#303030;--muted:#929292;--green:#78dba0}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#f4f4f4;font:14px Inter,system-ui,sans-serif;overflow:hidden}button,input{font:inherit}button{background:#f1f1f1;color:#111;border:0;border-radius:8px;padding:10px 13px;font-weight:700;cursor:pointer}button:disabled{opacity:.45;cursor:default}.quiet{background:#252525;color:#eee;border:1px solid #363636}.app{height:100dvh;display:grid;grid-template-rows:58px 1fr}.top{display:flex;align-items:center;gap:13px;padding:0 18px;border-bottom:1px solid var(--line);background:#111;z-index:2}.logo{width:28px;height:28px;border-radius:7px;background:#f2f2f2;color:#111;display:grid;place-items:center;font-weight:900}.brand{font-weight:800;letter-spacing:-.5px}.tag{color:var(--muted);font-size:12px}.topright{margin-left:auto;display:flex;align-items:center;gap:8px}.main{position:relative;min-height:0}.view{position:absolute;inset:0;background:#8aa4ba}canvas{display:block;width:100%;height:100%}.panel{position:absolute;top:16px;left:16px;width:min(330px,calc(100vw - 32px));max-height:calc(100% - 32px);overflow:auto;background:#141414ed;border:1px solid #383838;border-radius:13px;padding:15px;backdrop-filter:blur(16px);box-shadow:0 12px 40px #0005}.panel h1{font-size:17px;margin:0 0 5px;letter-spacing:-.5px}.sub{font-size:12px;color:#999;line-height:1.5;margin:0 0 15px}.drop{border:1px dashed #4b4b4b;border-radius:10px;padding:17px 12px;text-align:center;background:#1a1a1a;margin-bottom:12px}.drop strong{display:block;margin-bottom:5px}.drop span{color:#999;font-size:11px}.drop input{display:none}.actions{display:flex;gap:8px}.actions>*{flex:1}.status{padding:10px;border:1px solid #303030;border-radius:8px;background:#1a1a1a;font-size:12px;color:#bdbdbd;line-height:1.5;margin-top:12px;overflow-wrap:anywhere}.status b{color:var(--green)}.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.stat{background:#1c1c1c;border:1px solid #303030;border-radius:8px;padding:10px}.stat span{display:block;font-size:11px;color:#999;margin-bottom:5px}.stat strong{font-size:15px}.help{position:absolute;bottom:16px;left:16px;background:#141414d9;border:1px solid #383838;border-radius:10px;padding:10px 12px;color:#ddd;font-size:11px;line-height:1.7;backdrop-filter:blur(10px)}.cross{position:absolute;left:50%;top:50%;width:18px;height:18px;transform:translate(-50%,-50%);pointer-events:none;opacity:.9}.cross:before,.cross:after{content:"";position:absolute;background:#fff;box-shadow:0 1px 2px #000}.cross:before{width:2px;height:16px;left:8px;top:1px}.cross:after{height:2px;width:16px;top:8px;left:1px}.toast{position:absolute;top:16px;left:50%;transform:translateX(-50%);padding:10px 14px;background:#171717ee;border:1px solid #444;border-radius:9px;max-width:80vw;text-align:center;pointer-events:none}.hidden{display:none!important}.foot{font-size:10px;color:#777;margin-top:12px;line-height:1.5}@media(max-width:600px){.tag{display:none}.panel{top:10px;left:10px;width:min(300px,calc(100vw - 20px));padding:12px}.help{left:10px;bottom:10px}.top{padding:0 11px}.topright .tag{display:none}}
+</style>
+</head>
+<body>
+<div class="app">
+<header class="top"><div class="logo">S</div><div><div class="brand">schem world</div><div class="tag">minecraft schematic viewer</div></div><div class="topright"><span class="tag" id="worldLabel">no world loaded</span><button class="quiet" id="resetBtn">reset view</button></div></header>
+<main class="main"><div class="view" id="view"></div><div class="cross hidden" id="cross"></div>
+<section class="panel" id="panel"><h1>load a schematic</h1><p class="sub">Drop in a build and explore it in 3D. Supports Sponge <b>.schem</b> and legacy <b>.schematic</b> files.</p>
+<label class="drop" for="file"><strong>Choose schematic</strong><span>or drop a .schem / .schematic file here</span><input id="file" type="file" accept=".schem,.schematic,.nbt,.gz"></label>
+<div class="actions"><button id="demoBtn" class="quiet">load demo</button><button id="startBtn" disabled>explore world</button></div>
+<div class="status" id="status">Ready. Pick a schematic to begin.</div>
+<div class="stats"><div class="stat"><span>dimensions</span><strong id="dims">—</strong></div><div class="stat"><span>blocks</span><strong id="count">—</strong></div></div>
+<p class="foot">Textures are fetched from Minecraft asset mirrors as needed. The browser viewer is unofficial and is not affiliated with Mojang or Microsoft.</p>
+</section>
+<div class="help hidden" id="help"><b>WASD</b> move · <b>mouse</b> look · <b>space</b> jump<br><b>esc</b> unlock mouse · <b>tab</b> show controls</div><div class="toast hidden" id="toast"></div>
+</main></div>
+<script type="module">
+import * as THREE from 'https://esm.sh/three@0.180.0';
+import { gunzipSync, strFromU8 } from 'https://esm.sh/fflate@0.8.2';
+import * as nbt from 'https://esm.sh/prismarine-nbt@2.7.0';
+
+const $=id=>document.getElementById(id);
+const view=$('view'), panel=$('panel'), status=$('status'), fileInput=$('file');
+let renderer,scene,camera,clock,worldGroup,player,avatar,loaded=false,playing=false,yaw=0,pitch=0,velY=0,onGround=false;
+const keys={}; const textureCache=new Map(); let blockCount=0, worldDims=[0,0,0], lastFile='';
+const texBase='https://mcasset.cloud/26.3/assets/minecraft/textures/block/';
+function say(s){status.textContent=s}
+function toast(s){const t=$('toast');t.textContent=s;t.classList.remove('hidden');clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.classList.add('hidden'),2600)}
+function init(){
+ scene=new THREE.Scene();scene.background=new THREE.Color(0x8aa4ba);scene.fog=new THREE.Fog(0x8aa4ba,55,190);
+ camera=new THREE.PerspectiveCamera(75,view.clientWidth/view.clientHeight,.1,1000);
+ renderer=new THREE.WebGLRenderer({antialias:false,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,1.7));renderer.setSize(view.clientWidth,view.clientHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.NoToneMapping;view.appendChild(renderer.domElement);
+ const hemi=new THREE.HemisphereLight(0xdcecff,0x534c3e,2.1);scene.add(hemi);
+ const sun=new THREE.DirectionalLight(0xfff0d7,2.1);sun.position.set(-40,70,35);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);scene.add(sun);
+ worldGroup=new THREE.Group();scene.add(worldGroup);clock=new THREE.Clock();
+ const floor=new THREE.Mesh(new THREE.PlaneGeometry(2000,2000),new THREE.MeshLambertMaterial({color:0x526a47}));floor.rotation.x=-Math.PI/2;floor.position.y=-.08;floor.receiveShadow=true;scene.add(floor);
+ window.addEventListener('resize',()=>{camera.aspect=view.clientWidth/view.clientHeight;camera.updateProjectionMatrix();renderer.setSize(view.clientWidth,view.clientHeight)});
+ renderer.domElement.addEventListener('click',()=>{if(loaded&&playing&&!document.pointerLockElement)renderer.domElement.requestPointerLock?.()});
+ document.addEventListener('pointerlockchange',()=>{const locked=document.pointerLockElement===renderer.domElement;$('cross').classList.toggle('hidden',!locked);});
+ document.addEventListener('mousemove',e=>{if(document.pointerLockElement!==renderer.domElement)return;yaw-=e.movementX*.0022;pitch-=e.movementY*.0022;pitch=Math.max(-1.48,Math.min(1.48,pitch))});
+ document.addEventListener('keydown',e=>{keys[e.code]=true;if(['Space','ArrowUp','ArrowDown'].includes(e.code)&&playing)e.preventDefault();if(e.code==='Tab'){e.preventDefault();panel.classList.toggle('hidden')}});
+ document.addEventListener('keyup',e=>keys[e.code]=false);
+ animate();
+}
+function animate(){requestAnimationFrame(animate);if(!renderer)return;const dt=Math.min(clock.getDelta(),.04);if(playing)movePlayer(dt);renderer.render(scene,camera)}
+function makeAvatar(){
+ const g=new THREE.Group();
+ const skin=new THREE.MeshLambertMaterial({color:0xd5a078}),shirt=new THREE.MeshLambertMaterial({color:0x2e73ad}),pants=new THREE.MeshLambertMaterial({color:0x3b405c}),hair=new THREE.MeshLambertMaterial({color:0x4b3020});
+ function cube(w,h,d,mat,x,y,z){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);m.position.set(x,y,z);m.castShadow=true;g.add(m);return m}
+ cube(.5,.75,.27,shirt,0,1.12,0);cube(.25,.72,.25,skin,-.38,1.12,0);cube(.25,.72,.25,skin,.38,1.12,0);cube(.28,.72,.28,pants,-.14,.38,0);cube(.28,.72,.28,pants,.14,.38,0);cube(.5,.5,.5,skin,0,1.76,0);cube(.51,.18,.51,hair,0,1.99,0);
+ avatar=g;scene.add(avatar);return g;
+}
+function setPlayerAt(x,y,z){player={x,y,z};if(!avatar)makeAvatar();avatar.position.set(x,y,z);camera.position.set(x,y+1.62,z)}
+function movePlayer(dt){
+ if(!player)return;const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw)),right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));let move=new THREE.Vector3();
+ if(keys.KeyW||keys.ArrowUp)move.add(forward);if(keys.KeyS||keys.ArrowDown)move.sub(forward);if(keys.KeyD||keys.ArrowRight)move.add(right);if(keys.KeyA||keys.ArrowLeft)move.sub(right);
+ if(move.lengthSq())move.normalize().multiplyScalar((keys.ShiftLeft?7.4:4.4)*dt);
+ const nx=player.x+move.x,nz=player.z+move.z;
+ if(!collides(nx,player.y,player.z))player.x=nx;if(!collides(player.x,player.y,nz))player.z=nz;
+ if(keys.Space&&onGround){velY=7;onGround=false}velY-=19*dt;let ny=player.y+velY*dt;
+ if(ny<.1||collides(player.x,ny,player.z)){if(velY<0)onGround=true;velY=0;ny=Math.max(.1,Math.round(player.y*2)/2)}else onGround=false;
+ player.y=ny;avatar.position.set(player.x,player.y-.1,player.z);avatar.rotation.y=yaw;
+ const dir=new THREE.Vector3(-Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),-Math.cos(yaw)*Math.cos(pitch));camera.position.set(player.x,player.y+1.15,player.z);camera.lookAt(camera.position.clone().add(dir));
+}
+const solid=new Set();
+function collides(x,y,z){if(!worldGroup||!loaded)return false;const bx=Math.floor(x),by=Math.floor(y),bz=Math.floor(z);for(let xx=bx-1;xx<=bx+1;xx++)for(let yy=Math.floor(y);yy<=Math.floor(y+1.7);yy++)for(let zz=bz-1;zz<=bz+1;zz++){if(solid.has(xx+','+yy+','+zz)&&Math.abs(x-(xx+.5))<.32&&Math.abs(z-(zz+.5))<.32&&y<yy+1&&y+1.7>yy)return true}return false}
+function blockName(s){return String(s||'minecraft:stone').replace(/^minecraft:/,'').split('[')[0].replace(/[^a-z0-9_]/g,'')||'stone'}
+function texUrl(name){const aliases={'grass_block':'grass_block_top','dirt_path':'dirt_path_top','crafting_table':'crafting_table_front','furnace':'furnace_front','oak_log':'oak_log','birch_log':'birch_log','spruce_log':'spruce_log','water':'water_still','lava':'lava_still','air':'air'};return texBase+(aliases[name]||name)+'.png'}
+async function getTexture(name){
+ if(textureCache.has(name))return textureCache.get(name);
+ const p=new Promise(resolve=>{const loader=new THREE.TextureLoader();loader.setCrossOrigin('anonymous');loader.load(texUrl(name),t=>{t.magFilter=THREE.NearestFilter;t.minFilter=THREE.NearestMipmapNearestFilter;t.colorSpace=THREE.SRGBColorSpace;resolve(new THREE.MeshLambertMaterial({map:t}))},undefined,()=>resolve(fallbackMat(name)))});textureCache.set(name,p);return p;
+}
+function fallbackMat(name){let c=0x888888;if(/grass|moss|leaves|vine/.test(name))c=0x4e8c42;else if(/wood|log|plank/.test(name))c=0x9b7449;else if(/water/.test(name))c=0x426fd4;else if(/sand/.test(name))c=0xd7c88a;else if(/stone|deepslate|cobble|ore/.test(name))c=0x777777;else if(/glass/.test(name))c=0xb8dce5;return new THREE.MeshLambertMaterial({color:c})}
+function readVarints(bytes,amount){const out=[];let i=0;for(let n=0;n<amount&&i<bytes.length;n++){let value=0,shift=0,b;do{if(i>=bytes.length)throw Error('BlockData ended early');b=bytes[i++];value|=(b&127)<<shift;shift+=7;if(shift>35)throw Error('Invalid block palette varint')}while(b&128);out.push(value>>>0)}return out}
+function unwrap(parsed){let d=parsed.value||parsed;while(d&&d.value&&d.type!=='compound')d=d.value;return d}
+function val(obj,key){let v=obj?.[key];if(v&&typeof v==='object'&&'value'in v)return v.value;return v}
+function getCompound(root,key){const v=val(root,key);return v?.value||v||{}}
+function asNum(v){if(v&&typeof v==='object'&&'value'in v)v=v.value;return Number(v)||0}
+async function parseSchematic(file){
+ let bytes=new Uint8Array(await file.arrayBuffer());if(file.name.endsWith('.gz')||(bytes[0]===31&&bytes[1]===139))bytes=gunzipSync(bytes);
+ let parsed=await nbt.parse(bytes);let root=parsed.parsed||parsed;let d=unwrap(root);if(d?.value)d=d.value;
+ // prismarine-nbt wraps root data in a named compound
+ if(d?.type==='compound'&&d.value)d=d.value;
+ const data=getCompound(d,'Schematic');const rootData=Object.keys(data).length?data:d;
+ let width=asNum(val(rootData,'Width')),height=asNum(val(rootData,'Height')),length=asNum(val(rootData,'Length'));
+ if(!width||!height||!length){throw Error('Could not read schematic dimensions. Use Sponge .schem or legacy .schematic NBT files.')}
+ const paletteRaw=val(rootData,'Palette')||val(rootData,'BlockStatePalette')||{};
+ const palette={};for(const [name,id] of Object.entries(paletteRaw)){palette[name]=asNum(id)}
+ const blockData=val(rootData,'BlockData')||val(rootData,'BlockStates');
+ let ids=[];
+ if(blockData instanceof Uint8Array||ArrayBuffer.isView(blockData)){ids=readVarints(blockData,width*height*length)}
+ else if(Array.isArray(blockData)){ids=blockData.map(asNum)}
+ else throw Error('No supported block state data was found in this schematic.');
+ const blocks=[];for(let i=0;i<Math.min(ids.length,width*height*length);i++){const id=ids[i];let name=Object.keys(palette).find(k=>palette[k]===id)||'minecraft:stone';const b=blockName(name);if(b==='air'||b==='cave_air'||b==='void_air')continue;const x=i%width,z=Math.floor(i/width)%length,y=Math.floor(i/(width*length));blocks.push({x,y,z,name:b,full:name})}
+ if(!blocks.length)throw Error('This schematic contains no visible blocks.');return {width,height,length,blocks};
+}
+async function loadSchematic(file){
+ say('Reading '+file.name+'…');$('startBtn').disabled=true;
+ try{const result=await parseSchematic(file);await buildWorld(result);lastFile=file.name;$('worldLabel').textContent=file.name;$('dims').textContent=result.width+' × '+result.height+' × '+result.length;$('count').textContent=result.blocks.length.toLocaleString();say('Loaded '+file.name+'. Explore when you are ready.');$('startBtn').disabled=false;loaded=true;toast('schematic loaded')}
+ catch(e){console.error(e);say('Could not load file: '+(e?.message||e));toast('could not load schematic')}
+}
+async function buildWorld(data){
+ for(const c of [...worldGroup.children]){worldGroup.remove(c);if(c.geometry)c.geometry.dispose()}
+ solid.clear();blockCount=data.blocks.length;worldDims=[data.width,data.height,data.length];
+ const cx=data.width/2,cz=data.length/2;const groups=new Map();
+ for(const b of data.blocks){const x=b.x-cx,y=b.y,z=b.z-cz;solid.add(x+','+y+','+z);if(!groups.has(b.name))groups.set(b.name,[]);groups.get(b.name).push({x,y,z})}
+ const geo=new THREE.BoxGeometry(1,1,1);let done=0;
+ for(const [name,positions] of groups){const mat=await getTexture(name);const mesh=new THREE.InstancedMesh(geo,mat,positions.length);mesh.castShadow=true;mesh.receiveShadow=true;const dummy=new THREE.Object3D();for(let i=0;i<positions.length;i++){const p=positions[i];dummy.position.set(p.x+.5,p.y+.5,p.z+.5);dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix)}mesh.instanceMatrix.needsUpdate=true;worldGroup.add(mesh);done+=positions.length}
+ worldGroup.position.set(0,0,0);if(avatar){scene.remove(avatar);avatar=null}setPlayerAt(0,Math.max(2,data.height+2),Math.max(data.length/2,4)-cz); // position reset below
+ player.x=0;player.z=Math.max(3,data.length/2+3);avatar.position.set(player.x,player.y-.1,player.z);camera.position.set(player.x,player.y+1.15,player.z);
+ camera.far=Math.max(250,Math.max(data.width,data.height,data.length)*4);camera.updateProjectionMatrix();
+}
+function demo(){
+ const blocks=[],w=18,h=8,l=18;for(let x=0;x<w;x++)for(let z=0;z<l;z++){blocks.push({x,y:0,z,name:'grass_block'});blocks.push({x,y:1,z,name:'dirt'})}
+ for(let y=1;y<5;y++)for(let x=4;x<14;x++){blocks.push({x,y,z:3,name:'stone_bricks'});blocks.push({x,y,z:14,name:'stone_bricks'})}
+ for(let y=1;y<5;y++)for(let z=3;z<=14;z++){blocks.push({x:4,y,z,name:'stone_bricks'});blocks.push({x:13,y,z,name:'stone_bricks'})}
+ for(let x=7;x<11;x++)for(let z=7;z<11;z++)blocks.push({x,y:1,z,name:'oak_planks'});
+ buildWorld({width:w,height:h,length:l,blocks}).then(()=>{loaded=true;$('startBtn').disabled=false;$('dims').textContent=w+' × '+h+' × '+l;$('count').textContent=blocks.length.toLocaleString();$('worldLabel').textContent='demo build';say('Demo loaded. Click explore world to walk around.')})
+}
+function start(){if(!loaded)return;playing=true;panel.classList.add('hidden');$('help').classList.remove('hidden');renderer.domElement.requestPointerLock?.();toast('click the scene to capture your mouse')}
+function reset(){if(!loaded)return;player.x=0;player.y=Math.max(2,worldDims[1]+2);player.z=Math.max(3,worldDims[2]/2+3);velY=0;camera.position.set(player.x,player.y+1.15,player.z);yaw=0;pitch=0}
+fileInput.addEventListener('change',e=>{const f=e.target.files?.[0];if(f)loadSchematic(f)});
+$('startBtn').addEventListener('click',start);$('demoBtn').addEventListener('click',demo);$('resetBtn').addEventListener('click',reset);
+for(const ev of ['dragenter','dragover'])view.addEventListener(ev,e=>{e.preventDefault()});view.addEventListener('drop',e=>{e.preventDefault();const f=e.dataTransfer.files?.[0];if(f)loadSchematic(f)});
+init();
+</script>
+</body>
+</html>
